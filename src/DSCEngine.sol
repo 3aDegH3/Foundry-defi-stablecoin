@@ -96,12 +96,16 @@ contract DSCEngine is ReentrancyGuard {
         if (tokenAddresses.length != priceFeedAddresses.length) {
             revert DSCEngine__TokenAddressesAndPriceFeedAddressesLengthsDontMatch();
         }
-
         for (uint256 i = 0; i < tokenAddresses.length; i++) {
-            s_priceFeeds[tokenAddresses[i]] = priceFeedAddresses[i];
-            s_collateralTokens[i] = tokenAddresses[i];
+            address token = tokenAddresses[i];
+            address feed = priceFeedAddresses[i];
+            if (token == address(0) || feed == address(0)) {
+                revert DSCEngine__TokenNotAllowed(token);
+            }
+            s_priceFeeds[token] = feed;
+            // Use push instead of direct indexing to avoid out-of-bounds
+            s_collateralTokens.push(token);
         }
-
         i_dsc = DecentralizedStableCoin(dscAddress);
     }
 
@@ -208,6 +212,6 @@ contract DSCEngine is ReentrancyGuard {
         // Example: ETH price = $2,500.00 => price = 250000000000 (with 8 decimals)
         uint256 adjustedPrice = uint256(price) * ADDITIONAL_FEED_PRECISION;
 
-        return (amount * adjustedPrice) / FEED_PRECISION;
+        return (amount * adjustedPrice) / PRECISION;
     }
 }

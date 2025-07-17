@@ -12,7 +12,6 @@
     // Events
     // Modifiers
     // Functions
-
     // Layout of Functions:
     // constructor
     // receive function (if exists)
@@ -22,7 +21,7 @@
     // internal
     // private
     // view & pure functions
-
+    
     pragma solidity ^0.8.18;
 
 /// @title DecentralizedStableCoin (DSC)
