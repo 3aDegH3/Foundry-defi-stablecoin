@@ -38,6 +38,7 @@ error DSCEngine__TransferFailed();
 error DSCEngine__BreaksHealthFactor(uint256 healthFactorValue);
 error DSCEngine__HealthFactorOK();
 error DSCEngine__HealthFactorNotImproved();
+error DSCEngine__NotEnoughCollateralToRedeem();
 contract DSCEngine is ReentrancyGuard {
     /*/////////////////////////////////////////////////////////////
                         TYPE DECLARATIONS
@@ -141,7 +142,7 @@ contract DSCEngine is ReentrancyGuard {
     function redeemCollateral(
         address token,
         uint256 amount
-    ) external moreThanZero(amount) nonReentrant {
+    ) external moreThanZero(amount) nonReentrant isAllowedToken(token) {
         _redeemCollateral(token, amount, msg.sender, msg.sender);
         _revertIfHealthFactorIsBroken(msg.sender);
     }
@@ -151,12 +152,49 @@ contract DSCEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
+    // function liquidate(
+    //     address user,
+    //     address collateralToken,
+    //     uint256 debtToCover
+    // ) external nonReentrant moreThanZero(debtToCover) {
+    //     uint startingUserHealthFactor = _getHealthFactor(user);
+    //     console.log("startingUserHealthFactor is ", startingUserHealthFactor);
+    //     if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
+    //         revert DSCEngine__HealthFactorOK();
+    //     }
+
+    //     uint256 tokenAmountFromDebtCovered = getTokenAmountFromUsd(
+    //         collateralToken,
+    //         debtToCover
+    //     );
+
+    //     uint256 bonusCollateral = (tokenAmountFromDebtCovered *
+    //         LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
+    //     uint256 totalCollateralToRedeem = tokenAmountFromDebtCovered +
+    //         bonusCollateral;
+
+    //     _redeemCollateral(
+    //         collateralToken,
+    //         totalCollateralToRedeem,
+    //         user,
+    //         msg.sender
+    //     );
+    //     _burnDsc(debtToCover, user, msg.sender);
+
+    //     uint256 endingUserHealthFactor = _getHealthFactor(user);
+    //     // This conditional should never hit, but just in case
+    //     if (endingUserHealthFactor <= startingUserHealthFactor) {
+    //         revert DSCEngine__HealthFactorNotImproved();
+    //     }
+    //     _revertIfHealthFactorIsBroken(msg.sender);
+    // }
     function liquidate(
         address user,
         address collateralToken,
         uint256 debtToCover
     ) external nonReentrant moreThanZero(debtToCover) {
-        uint startingUserHealthFactor = _getHealthFactor(user);
+        uint256 startingUserHealthFactor = _getHealthFactor(user);
+        console.log("hf is " ,startingUserHealthFactor);
         if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
             revert DSCEngine__HealthFactorOK();
         }
@@ -165,25 +203,36 @@ contract DSCEngine is ReentrancyGuard {
             collateralToken,
             debtToCover
         );
+        console.log("tokenAmountFromDebtCovered", tokenAmountFromDebtCovered);
 
         uint256 bonusCollateral = (tokenAmountFromDebtCovered *
             LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
+        console.log("bonusCollateral", bonusCollateral);
+
         uint256 totalCollateralToRedeem = tokenAmountFromDebtCovered +
             bonusCollateral;
+        console.log("totalCollateralToRedeem", totalCollateralToRedeem);
 
+        uint256 userCollateralBalance = s_collateralDeposited[user][
+            collateralToken
+        ];
+        if (userCollateralBalance < totalCollateralToRedeem) {
+            revert DSCEngine__NotEnoughCollateralToRedeem();
+        }
         _redeemCollateral(
             collateralToken,
             totalCollateralToRedeem,
             user,
             msg.sender
         );
+        console.log("go");
         _burnDsc(debtToCover, user, msg.sender);
 
         uint256 endingUserHealthFactor = _getHealthFactor(user);
-        // This conditional should never hit, but just in case
         if (endingUserHealthFactor <= startingUserHealthFactor) {
             revert DSCEngine__HealthFactorNotImproved();
         }
+
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
@@ -252,21 +301,19 @@ contract DSCEngine is ReentrancyGuard {
         address feed = s_priceFeeds[token];
         AggregatorV3Interface priceFeed = AggregatorV3Interface(feed);
         (, int256 price, , , ) = priceFeed.latestRoundData();
+        console.log("price is " , price);
         uint256 adjustedPrice = uint256(price) * ADDITIONAL_FEED_PRECISION;
         console.log("adjusted price is ", adjustedPrice);
         return (amount * adjustedPrice) / PRECISION;
     }
 
-    function getAccountInformation(address user)
-        public
-        view
-        returns (uint256 collateralValue, uint256 dscMinted)
-    {
+    function getAccountInformation(
+        address user
+    ) public view returns (uint256 collateralValue, uint256 dscMinted) {
         (collateralValue, dscMinted) = _getAccountInformation(user);
     }
 
-
-    function getHealthFactor(address user) public view returns(uint256){
+    function getHealthFactor(address user) public view returns (uint256) {
         return _getHealthFactor(user);
     }
 
@@ -280,6 +327,8 @@ contract DSCEngine is ReentrancyGuard {
         address from,
         address to
     ) private {
+        console.log("0");
+
         s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
         emit CollateralRedeemed(
             from,
@@ -287,10 +336,13 @@ contract DSCEngine is ReentrancyGuard {
             tokenCollateralAddress,
             amountCollateral
         );
+        console.log("1");
         bool success = IERC20(tokenCollateralAddress).transfer(
             to,
             amountCollateral
         );
+        console.log("2");
+
         if (!success) {
             revert DSCEngine__TransferFailed();
         }
@@ -322,11 +374,20 @@ contract DSCEngine is ReentrancyGuard {
         dscMinted = s_DSCMinted[user];
     }
 
-    function _getHealthFactor(address user) internal view returns (uint256) {
+    function _getHealthFactor(address user) private view returns (uint256) {
         (
-            uint256 totalCollateralValue,
+            uint256 collateralValueInUsd,
             uint256 totalDscMinted
         ) = _getAccountInformation(user);
+        console.log("collateralValueInUsd in healfactor is ", collateralValueInUsd);
+        console.log("totalDscMinted is ", totalDscMinted);
+        return _calculateHealthFactor(collateralValueInUsd, totalDscMinted);
+    }
+
+    function _calculateHealthFactor(
+        uint256 totalCollateralValue,
+        uint256 totalDscMinted
+    ) internal pure returns (uint256) {
         if (totalDscMinted == 0) return type(uint256).max;
         return
             ((totalCollateralValue * LIQUIDATION_THRESHOLD * PRECISION) /
