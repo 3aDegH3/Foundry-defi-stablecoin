@@ -26,9 +26,10 @@ pragma solidity ^0.8.18;
 // Imports
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {AggregatorV3Interface} from "lib/chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {DecentralizedStableCoin} from "src/DecentralizedStableCoin.sol";
 import "forge-std/console.sol";
+import {OracleLib} from "./libraries/OracleLib.sol";
 
 // Errors
 error DSCEngine__NeedsMoreThanZero();
@@ -44,7 +45,7 @@ contract DSCEngine is ReentrancyGuard {
                         TYPE DECLARATIONS
     /////////////////////////////////////////////////////////////*/
 
-    // (no custom types)
+    using OracleLib for AggregatorV3Interface;
 
     /*/////////////////////////////////////////////////////////////
                          STATE VARIABLES
@@ -194,10 +195,11 @@ contract DSCEngine is ReentrancyGuard {
         uint256 debtToCover
     ) external nonReentrant moreThanZero(debtToCover) {
         uint256 startingUserHealthFactor = _getHealthFactor(user);
-        console.log("hf is " ,startingUserHealthFactor);
+        console.log("hf is ", startingUserHealthFactor);
         if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
             revert DSCEngine__HealthFactorOK();
         }
+        console.log("afhter if ");
 
         uint256 tokenAmountFromDebtCovered = getTokenAmountFromUsd(
             collateralToken,
@@ -247,6 +249,12 @@ contract DSCEngine is ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
+    function getCollateralTokenPriceFeed(
+        address token
+    ) external view returns (address) {
+        return s_priceFeeds[token];
+    }
+
     /*/////////////////////////////////////////////////////////////
                          PUBLIC FUNCTIONS
     /////////////////////////////////////////////////////////////*/
@@ -289,7 +297,7 @@ contract DSCEngine is ReentrancyGuard {
     ) public view returns (uint256) {
         address feed = s_priceFeeds[token];
         AggregatorV3Interface priceFeed = AggregatorV3Interface(feed);
-        (, int256 price, , , ) = priceFeed.latestRoundData();
+        (, int256 price, , , ) = priceFeed.staleCheckLatestRoundData();
         uint256 tokenPriceInUsd = uint256(price) * ADDITIONAL_FEED_PRECISION;
         return (usdAmount * PRECISION) / tokenPriceInUsd;
     }
@@ -300,8 +308,8 @@ contract DSCEngine is ReentrancyGuard {
     ) public view returns (uint256) {
         address feed = s_priceFeeds[token];
         AggregatorV3Interface priceFeed = AggregatorV3Interface(feed);
-        (, int256 price, , , ) = priceFeed.latestRoundData();
-        console.log("price is " , price);
+        (, int256 price, , , ) = priceFeed.staleCheckLatestRoundData();
+        console.log("price is ", price);
         uint256 adjustedPrice = uint256(price) * ADDITIONAL_FEED_PRECISION;
         console.log("adjusted price is ", adjustedPrice);
         return (amount * adjustedPrice) / PRECISION;
@@ -317,6 +325,44 @@ contract DSCEngine is ReentrancyGuard {
         return _getHealthFactor(user);
     }
 
+    function getPrecision() external pure returns (uint256) {
+        return PRECISION;
+    }
+
+    function getAdditionalFeedPrecision() external pure returns (uint256) {
+        return ADDITIONAL_FEED_PRECISION;
+    }
+
+    function getLiquidationThreshold() external pure returns (uint256) {
+        return LIQUIDATION_THRESHOLD;
+    }
+
+    function getLiquidationBonus() external pure returns (uint256) {
+        return LIQUIDATION_BONUS;
+    }
+
+    function getLiquidationPrecision() external pure returns (uint256) {
+        return LIQUIDATION_PRECISION;
+    }
+
+    function getMinHealthFactor() external pure returns (uint256) {
+        return MIN_HEALTH_FACTOR;
+    }
+
+    function getCollateralTokens() external view returns (address[] memory) {
+        return s_collateralTokens;
+    }
+
+    function getDsc() external view returns (address) {
+        return address(i_dsc);
+    }
+    function getCollateralBalanceOfUser(
+        address user,
+        address token
+    ) external view returns (uint256) {
+        return s_collateralDeposited[user][token];
+    }
+
     /*/////////////////////////////////////////////////////////////
                              INTERNAL & PRIVATE
     /////////////////////////////////////////////////////////////*/
@@ -327,8 +373,6 @@ contract DSCEngine is ReentrancyGuard {
         address from,
         address to
     ) private {
-        console.log("0");
-
         s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
         emit CollateralRedeemed(
             from,
@@ -336,12 +380,11 @@ contract DSCEngine is ReentrancyGuard {
             tokenCollateralAddress,
             amountCollateral
         );
-        console.log("1");
+
         bool success = IERC20(tokenCollateralAddress).transfer(
             to,
             amountCollateral
         );
-        console.log("2");
 
         if (!success) {
             revert DSCEngine__TransferFailed();
@@ -379,7 +422,10 @@ contract DSCEngine is ReentrancyGuard {
             uint256 collateralValueInUsd,
             uint256 totalDscMinted
         ) = _getAccountInformation(user);
-        console.log("collateralValueInUsd in healfactor is ", collateralValueInUsd);
+        console.log(
+            "collateralValueInUsd in healfactor is ",
+            collateralValueInUsd
+        );
         console.log("totalDscMinted is ", totalDscMinted);
         return _calculateHealthFactor(collateralValueInUsd, totalDscMinted);
     }
@@ -398,9 +444,4 @@ contract DSCEngine is ReentrancyGuard {
         uint256 hf = _getHealthFactor(user);
         if (hf < MIN_HEALTH_FACTOR) revert DSCEngine__BreaksHealthFactor(hf);
     }
-
-    /*/////////////////////////////////////////////////////////////
-                          VIEW & PURE
-    /////////////////////////////////////////////////////////////*/
-    // All view/pure functions are declared above with correct visibility
 }
