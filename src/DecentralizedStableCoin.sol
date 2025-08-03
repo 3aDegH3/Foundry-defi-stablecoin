@@ -14,17 +14,18 @@ contract DecentralizedStableCoin is ERC20Burnable, Ownable {
     error ZeroAddress();
 
     /// @notice Initialize DSC with name and symbol, set owner
-    constructor() ERC20("Decentralized Stablecoin", "DSC") {
+    constructor() ERC20("Decentralized Stablecoin", "DSC") Ownable(msg.sender){
         transferOwnership(msg.sender);
     }
 
     /// @notice Mint DSC to an account
     /// @param to Recipient address (non-zero)
     /// @param amount Number of tokens to mint (>0)
-    function mint(address to, uint256 amount) external onlyOwner {
+    function mint(address to, uint256 amount) external onlyOwner returns(bool){
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
         _mint(to, amount);
+        return true;
     }
 
     /// @notice Burn DSC from owner
@@ -36,3 +37,10 @@ contract DecentralizedStableCoin is ERC20Burnable, Ownable {
         super.burn(amount);
     }
 }
+
+
+
+
+
+
+    
